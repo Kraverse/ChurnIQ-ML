@@ -1,78 +1,97 @@
 from pathlib import Path
-import json
+from urllib.request import urlretrieve
 
-import joblib
 import pandas as pd
 import streamlit as st
 
+from churniq.pipeline import build_models, prepare_frame
+
 st.set_page_config(page_title="ChurnIQ-ML", page_icon="📊", layout="wide")
 
-ROOT = Path(__file__).resolve().parents[1]
-MODEL_PATH = ROOT / "models" / "churn_model.joblib"
-METRICS_PATH = ROOT / "reports" / "metrics.json"
+DATA_URL = "https://raw.githubusercontent.com/IBM/telco-customer-churn-on-icp4d/master/data/Telco-Customer-Churn.csv"
+DATA_PATH = Path("data/raw/Telco-Customer-Churn.csv")
+MODEL_NAME = "logistic_regression"
+
+
+@st.cache_resource
+def load_model():
+    DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if not DATA_PATH.exists():
+        urlretrieve(DATA_URL, DATA_PATH)
+
+    df = pd.read_csv(DATA_PATH)
+    X, y = prepare_frame(df)
+    model = build_models(X)[MODEL_NAME]
+    model.fit(X, y)
+    return model
+
 
 st.title("ChurnIQ-ML")
 st.caption("Customer churn prediction and retention intelligence")
 
-if not MODEL_PATH.exists():
-    st.warning("Model is not available. Run the training pipeline first.")
-    st.stop()
+with st.spinner("Preparing the churn prediction model..."):
+    model = load_model()
 
-model = joblib.load(MODEL_PATH)
+st.success("Model ready")
 
-with st.sidebar:
-    st.header("Customer profile")
-    tenure = st.number_input("Tenure (months)", 0, 100, 12)
-    monthly_charges = st.number_input("Monthly charges", 0.0, 500.0, 70.0)
-    total_charges = st.number_input("Total charges", 0.0, 10000.0, 840.0)
+st.subheader("Customer prediction")
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    tenure = st.number_input("Tenure (months)", min_value=0, max_value=100, value=12)
+    monthly_charges = st.number_input("Monthly charges", min_value=0.0, value=70.0)
     contract = st.selectbox("Contract", ["Month-to-month", "One year", "Two year"])
-    internet = st.selectbox("Internet service", ["DSL", "Fiber optic", "No"])
-    payment = st.selectbox("Payment method", [
-        "Electronic check", "Mailed check", "Bank transfer (automatic)", "Credit card (automatic)"
-    ])
-    paperless = st.selectbox("Paperless billing", ["Yes", "No"])
-    senior = st.selectbox("Senior citizen", [0, 1])
+with col2:
+    internet_service = st.selectbox("Internet service", ["DSL", "Fiber optic", "No"])
+    payment_method = st.selectbox(
+        "Payment method",
+        [
+            "Electronic check",
+            "Mailed check",
+            "Bank transfer (automatic)",
+            "Credit card (automatic)",
+        ],
+    )
+    senior_citizen = st.selectbox("Senior citizen", [0, 1])
+with col3:
     partner = st.selectbox("Partner", ["Yes", "No"])
     dependents = st.selectbox("Dependents", ["Yes", "No"])
-    phone = st.selectbox("Phone service", ["Yes", "No"])
-    multiple = st.selectbox("Multiple lines", ["Yes", "No", "No phone service"])
-    online_security = st.selectbox("Online security", ["Yes", "No", "No internet service"])
-    online_backup = st.selectbox("Online backup", ["Yes", "No", "No internet service"])
-    device_protection = st.selectbox("Device protection", ["Yes", "No", "No internet service"])
-    tech_support = st.selectbox("Tech support", ["Yes", "No", "No internet service"])
-    streaming_tv = st.selectbox("Streaming TV", ["Yes", "No", "No internet service"])
-    streaming_movies = st.selectbox("Streaming movies", ["Yes", "No", "No internet service"])
-    paperless = st.selectbox("Paperless billing", ["Yes", "No"], key="paperless_2")
-    submitted = st.button("Predict churn", type="primary", use_container_width=True)
+    paperless = st.selectbox("Paperless billing", ["Yes", "No"])
 
-if submitted:
-    customer = pd.DataFrame([{
-        "gender": "Male", "SeniorCitizen": senior, "Partner": partner, "Dependents": dependents,
-        "tenure": tenure, "PhoneService": phone, "MultipleLines": multiple,
-        "InternetService": internet, "OnlineSecurity": online_security, "OnlineBackup": online_backup,
-        "DeviceProtection": device_protection, "TechSupport": tech_support, "StreamingTV": streaming_tv,
-        "StreamingMovies": streaming_movies, "Contract": contract, "PaperlessBilling": paperless,
-        "PaymentMethod": payment, "MonthlyCharges": monthly_charges, "TotalCharges": total_charges,
-    }])
-    probability = float(model.predict_proba(customer)[0, 1])
-    prediction = int(probability >= 0.5)
+if st.button("Predict churn", type="primary"):
+    row = {
+        "gender": "Male",
+        "SeniorCitizen": senior_citizen,
+        "Partner": partner,
+        "Dependents": dependents,
+        "tenure": tenure,
+        "PhoneService": "Yes",
+        "MultipleLines": "No",
+        "InternetService": internet_service,
+        "OnlineSecurity": "No internet service" if internet_service == "No" else "No",
+        "OnlineBackup": "No internet service" if internet_service == "No" else "No",
+        "DeviceProtection": "No internet service" if internet_service == "No" else "No",
+        "TechSupport": "No internet service" if internet_service == "No" else "No",
+        "StreamingTV": "No internet service" if internet_service == "No" else "No",
+        "StreamingMovies": "No internet service" if internet_service == "No" else "No",
+        "Contract": contract,
+        "PaperlessBilling": paperless,
+        "PaymentMethod": payment_method,
+        "MonthlyCharges": monthly_charges,
+        "TotalCharges": monthly_charges * tenure,
+    }
+
+    frame = pd.DataFrame([row])
+    prediction = int(model.predict(frame)[0])
+    probability = float(model.predict_proba(frame)[0, 1])
+
+    st.divider()
     st.subheader("Prediction")
+    st.metric("Churn probability", f"{probability:.1%}")
     if prediction:
-        st.error(f"Higher churn risk — probability: {probability:.1%}")
-        st.write("Consider retention outreach and reviewing contract, billing, and service experience.")
+        st.warning("Higher churn risk detected")
     else:
-        st.success(f"Lower churn risk — probability: {probability:.1%}")
+        st.success("Lower churn risk detected")
 
 st.divider()
-
-if METRICS_PATH.exists():
-    metrics = json.loads(METRICS_PATH.read_text(encoding="utf-8"))
-    st.subheader("Model evaluation")
-    st.write(f"Selected model: **{metrics.get('selected_model', 'N/A')}**")
-    rows = []
-    for name, values in metrics.get("models", {}).items():
-        rows.append({"Model": name, **values})
-    if rows:
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-else:
-    st.info("Evaluation metrics will appear after the training pipeline generates reports/metrics.json.")
+st.caption("Model: Logistic Regression | Training data: IBM Telco Customer Churn dataset")
