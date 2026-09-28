@@ -2,6 +2,12 @@
 
 End-to-end customer churn prediction and retention intelligence project built with Python and scikit-learn.
 
+## 🚀 Live Demo
+
+**Streamlit Dashboard:** https://churn-iq.streamlit.app/
+
+Use the live dashboard to enter customer details and receive a churn probability and risk prediction.
+
 ## What it does
 
 - Downloads and validates the Telco Customer Churn dataset
